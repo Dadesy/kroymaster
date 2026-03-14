@@ -2,14 +2,63 @@
   <div class="card">
     <p class="card-title">Схема раскроя</p>
 
+    <!-- Controls bar -->
+    <div class="controls-bar">
+      <!-- Mode toggle -->
+      <div class="mode-toggle">
+        <button
+          class="mode-btn"
+          :class="{ active: !isManualMode }"
+          type="button"
+          @click="isManualMode ? exitManualMode() : null"
+        >⚡ Авто</button>
+        <button
+          class="mode-btn"
+          :class="{ active: isManualMode }"
+          type="button"
+          @click="!isManualMode ? enterManualMode() : null"
+        >✋ Ручной</button>
+      </div>
+
+      <!-- Kerf toggle + stepper -->
+      <div class="kerf-group">
+        <button
+          class="kerf-toggle"
+          :class="{ active: kerfEnabled }"
+          type="button"
+          @click="kerfEnabled = !kerfEnabled"
+          title="Показать отступы (пропил)"
+        >
+          <span class="kerf-icon">✂</span>
+          <span>Пропил</span>
+        </button>
+        <template v-if="kerfEnabled">
+          <button class="stepper-btn" type="button" @click="kerfSize = Math.max(1, kerfSize - 1)">−</button>
+          <span class="kerf-val">{{ kerfSize }} мм</span>
+          <button class="stepper-btn" type="button" @click="kerfSize = Math.min(20, kerfSize + 1)">+</button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Manual mode hint -->
+    <div v-if="isManualMode" class="manual-hint">
+      ✋ Ручной режим — перетаскивайте детали
+      <span v-if="overlappingInstanceIds.size > 0" class="overlap-warn"> · {{ overlappingInstanceIds.size }} шт. пересекаются!</span>
+    </div>
+
     <div ref="wrapRef" class="svg-wrap">
       <svg
         v-if="sheet.width > 0 && sheet.height > 0 && containerW > 0"
+        ref="svgRef"
         :viewBox="`0 0 ${sheet.width} ${sheet.height}`"
         :width="containerW"
         :height="svgH"
         style="display: block; border-radius: 8px;"
+        :style="{ cursor: dragging ? 'grabbing' : isManualMode ? 'default' : 'default' }"
         xmlns="http://www.w3.org/2000/svg"
+        @pointermove.prevent="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointerleave="onPointerUp"
       >
         <!-- Sheet background -->
         <rect
@@ -20,7 +69,7 @@
           :stroke-width="sw(6)"
         />
 
-        <!-- Grid lines (optional visual aid) -->
+        <!-- Grid lines -->
         <g opacity="0.25">
           <template v-for="gx in gridLines.x" :key="`gx-${gx}`">
             <line :x1="gx" y1="0" :x2="gx" :y2="sheet.height" stroke="#93C5FD" :stroke-width="sw(2)" />
@@ -31,7 +80,26 @@
         </g>
 
         <!-- Placed pieces -->
-        <g v-for="piece in placedPieces" :key="`${piece.partId}-${piece.x}-${piece.y}`">
+        <g
+          v-for="piece in placedPieces"
+          :key="piece.instanceId"
+          :style="{ cursor: isManualMode ? (dragging?.instanceId === piece.instanceId ? 'grabbing' : 'grab') : 'default' }"
+        >
+          <!-- Kerf dashed border -->
+          <rect
+            v-if="kerfEnabled"
+            :x="piece.x"
+            :y="piece.y"
+            :width="piece.w + kerfSize"
+            :height="piece.h + kerfSize"
+            fill="none"
+            stroke="#F59E0B"
+            :stroke-width="sw(2)"
+            stroke-dasharray="4 3"
+            opacity="0.6"
+            rx="2"
+          />
+
           <!-- Shadow -->
           <rect
             :x="piece.x + sw(8)"
@@ -49,12 +117,27 @@
             :width="piece.w - sw(6)"
             :height="piece.h - sw(6)"
             :fill="PART_COLORS[piece.colorIndex]"
-            opacity="0.85"
-            :stroke="PART_COLORS[piece.colorIndex]"
-            :stroke-width="sw(3)"
+            :opacity="overlappingInstanceIds.has(piece.instanceId) ? 0.5 : 0.85"
+            :stroke="overlappingInstanceIds.has(piece.instanceId) ? '#EF4444' : PART_COLORS[piece.colorIndex]"
+            :stroke-width="sw(overlappingInstanceIds.has(piece.instanceId) ? 5 : 3)"
             rx="4"
+            @pointerdown.prevent="startDrag($event, piece.instanceId)"
           />
-          <!-- Label: only show if piece is large enough on screen -->
+
+          <!-- Overlap red tint -->
+          <rect
+            v-if="overlappingInstanceIds.has(piece.instanceId)"
+            :x="piece.x + sw(3)"
+            :y="piece.y + sw(3)"
+            :width="piece.w - sw(6)"
+            :height="piece.h - sw(6)"
+            fill="#EF4444"
+            opacity="0.2"
+            rx="4"
+            pointer-events="none"
+          />
+
+          <!-- Label -->
           <text
             v-if="piece.w * scale > 48 && piece.h * scale > 22"
             :x="piece.x + piece.w / 2"
@@ -65,7 +148,21 @@
             :font-size="labelSize(piece.w, piece.h)"
             font-weight="700"
             font-family="-apple-system, sans-serif"
+            pointer-events="none"
           >{{ piece.label }}</text>
+
+          <!-- Rotation indicator -->
+          <text
+            v-if="piece.rotated && piece.w * scale > 30 && piece.h * scale > 30"
+            :x="piece.x + piece.w - sw(18)"
+            :y="piece.y + sw(22)"
+            text-anchor="middle"
+            dominant-baseline="middle"
+            fill="white"
+            :font-size="sw(20)"
+            opacity="0.8"
+            pointer-events="none"
+          >↻</text>
         </g>
 
         <!-- Dimension labels -->
@@ -77,6 +174,7 @@
           :font-size="sw(28)"
           font-family="-apple-system, sans-serif"
           font-weight="600"
+          pointer-events="none"
         >{{ sheet.width }} мм</text>
 
         <text
@@ -89,6 +187,7 @@
           font-family="-apple-system, sans-serif"
           font-weight="600"
           :transform="`rotate(-90, ${sw(28)}, ${sheet.height / 2})`"
+          pointer-events="none"
         >{{ sheet.height }} мм</text>
       </svg>
 
@@ -97,8 +196,8 @@
       </div>
     </div>
 
-    <p v-if="unplacedCount > 0" class="warn">
-      ⚠️ {{ unplacedCount }} дет. не вписываются — проверьте размеры
+    <p v-if="totalUnplaced > 0" class="warn">
+      ⚠️ {{ totalUnplaced }} шт. не разместились — не хватает места на листе
     </p>
   </div>
 </template>
@@ -107,24 +206,27 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useGlassStore, PART_COLORS } from '~/composables/useGlassStore'
 
-const { sheet, parts, placedPieces } = useGlassStore()
+const {
+  sheet, placedPieces, totalUnplaced,
+  kerfEnabled, kerfSize,
+  isManualMode, enterManualMode, exitManualMode, movePiece,
+  overlappingInstanceIds,
+} = useGlassStore()
 
 const wrapRef = ref<HTMLElement | null>(null)
+const svgRef = ref<SVGSVGElement | null>(null)
 const containerW = ref(0)
 
-// Scale factor: SVG user-units → screen pixels
 const scale = computed(() =>
   sheet.value.width > 0 ? containerW.value / sheet.value.width : 1
 )
 
-// SVG rendered height
 const svgH = computed(() =>
   sheet.value.height > 0 && sheet.value.width > 0
     ? Math.round(containerW.value * sheet.value.height / sheet.value.width)
     : 0
 )
 
-// Convert a "pixel" size to SVG user units
 function sw(px: number): number {
   return scale.value > 0 ? px / scale.value : px
 }
@@ -135,7 +237,6 @@ function labelSize(w: number, h: number): number {
 
 const dimColor = '#94A3B8'
 
-// Light grid every 20% of dimensions
 const gridLines = computed(() => {
   const xs: number[] = []
   const ys: number[] = []
@@ -147,16 +248,59 @@ const gridLines = computed(() => {
   return { x: xs, y: ys }
 })
 
-// Count pieces that don't fit at all (either dimension > sheet)
-const unplacedCount = computed(() => {
-  const sw = sheet.value.width
-  const sh = sheet.value.height
-  return parts.value
-    .filter(p => p.width > sw || p.height > sh)
-    .reduce((sum, p) => sum + p.quantity, 0)
-})
+// ── Drag ──────────────────────────────────────────────────────────────────
+interface DragState {
+  instanceId: string
+  pointerId: number
+  offsetX: number  // SVG units: cursor offset from piece origin
+  offsetY: number
+}
 
-// ResizeObserver to track container width
+const dragging = ref<DragState | null>(null)
+
+function svgPoint(e: PointerEvent): { x: number; y: number } | null {
+  const svg = svgRef.value
+  if (!svg) return null
+  const pt = svg.createSVGPoint()
+  pt.x = e.clientX
+  pt.y = e.clientY
+  const ctm = svg.getScreenCTM()
+  if (!ctm) return null
+  const svgPt = pt.matrixTransform(ctm.inverse())
+  return { x: svgPt.x, y: svgPt.y }
+}
+
+function startDrag(e: PointerEvent, instanceId: string) {
+  if (!isManualMode.value) return
+  const pt = svgPoint(e)
+  if (!pt) return
+
+  const piece = placedPieces.value.find(p => p.instanceId === instanceId)
+  if (!piece) return
+
+  ;(e.target as Element).setPointerCapture(e.pointerId)
+
+  dragging.value = {
+    instanceId,
+    pointerId: e.pointerId,
+    offsetX: pt.x - piece.x,
+    offsetY: pt.y - piece.y,
+  }
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!dragging.value || e.pointerId !== dragging.value.pointerId) return
+  const pt = svgPoint(e)
+  if (!pt) return
+  movePiece(dragging.value.instanceId, pt.x - dragging.value.offsetX, pt.y - dragging.value.offsetY)
+}
+
+function onPointerUp(e: PointerEvent) {
+  if (!dragging.value || e.pointerId !== dragging.value.pointerId) return
+  dragging.value = null
+}
+
+// ── ResizeObserver ────────────────────────────────────────────────────────
 let ro: ResizeObserver | null = null
 
 function measure() {
@@ -173,6 +317,122 @@ onUnmounted(() => ro?.disconnect())
 </script>
 
 <style scoped>
+.controls-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+/* Mode toggle */
+.mode-toggle {
+  display: flex;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mode-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  background: #F8FAFC;
+  color: #64748B;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1.4;
+}
+
+.mode-btn:first-child {
+  border-right: 1.5px solid #E2E8F0;
+}
+
+.mode-btn.active {
+  background: #2563EB;
+  color: white;
+}
+
+/* Kerf group */
+.kerf-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kerf-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  background: #F8FAFC;
+  color: #64748B;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.kerf-toggle.active {
+  background: #FFFBEB;
+  border-color: #F59E0B;
+  color: #B45309;
+}
+
+.kerf-icon {
+  font-size: 14px;
+}
+
+.stepper-btn {
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 8px;
+  background: #F8FAFC;
+  font-size: 16px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.1s;
+}
+
+.stepper-btn:active {
+  background: #E2E8F0;
+}
+
+.kerf-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: #B45309;
+  min-width: 36px;
+  text-align: center;
+}
+
+/* Manual mode hint */
+.manual-hint {
+  font-size: 12px;
+  color: #475569;
+  background: #F1F5F9;
+  padding: 6px 10px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.overlap-warn {
+  color: #DC2626;
+  font-weight: 700;
+}
+
+/* SVG wrap */
 .svg-wrap {
   width: 100%;
   border-radius: 8px;
