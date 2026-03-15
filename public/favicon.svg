@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Blue rounded background -->
+  <rect width="32" height="32" rx="7" fill="#2563EB"/>
+  <!-- Sheet outline -->
+  <rect x="5" y="5" width="22" height="22" rx="1.5" fill="none" stroke="white" stroke-width="2.2"/>
+  <!-- Horizontal divider -->
+  <line x1="5" y1="14.5" x2="27" y2="14.5" stroke="white" stroke-width="2.2"/>
+  <!-- Vertical divider (right column only) -->
+  <line x1="17" y1="14.5" x2="17" y2="27" stroke="white" stroke-width="2.2"/>
+  <!-- Triangle indicator (top-left cell) — polygon shape hint -->
+  <polygon points="7,7 14,7 7,13" fill="white" opacity="0.55"/>
+</svg>
