@@ -1,30 +1,112 @@
 <template>
   <div class="app">
     <header class="header">
-      <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="2" y="3" width="20" height="18" rx="1" />
-        <line x1="2" y1="9" x2="22" y2="9" />
-        <line x1="12" y1="9" x2="12" y2="21" />
-      </svg>
-      <h1>Раскрой стекла</h1>
+      <div class="header-inner">
+        <div class="header-brand">
+          <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="18" rx="1" />
+            <line x1="2" y1="9" x2="22" y2="9" />
+            <line x1="12" y1="9" x2="12" y2="21" />
+          </svg>
+          <div>
+            <div class="header-title">Раскрой онлайн</div>
+            <div class="header-sub">Оптимальный раскрой листовых материалов</div>
+          </div>
+        </div>
+      </div>
     </header>
 
-    <main class="main">
-      <SheetSetup />
-      <StatsPanel />
-      <GlassVisualization />
-      <PartForm />
-      <PartsList />
-    </main>
+    <div class="layout">
+      <aside class="sidebar">
+        <SheetSetup />
+        <PartForm />
+        <PartsList />
+        <ClearAllButton />
+      </aside>
+
+      <main class="content" id="main-content">
+        <StatsPanel />
+        <GlassVisualization />
+        <CuttingList />
+      </main>
+    </div>
+
+    <InfoSection />
+
+    <footer class="site-footer">
+      <p>© 2025 Раскрой онлайн — бесплатный калькулятор раскроя листовых материалов</p>
+    </footer>
   </div>
 </template>
 
 <script setup lang="ts">
+const title = 'Раскрой онлайн — калькулятор оптимального раскроя листовых материалов бесплатно'
+const description = 'Бесплатный онлайн-калькулятор раскроя стекла, металла, дерева и пластика. Автоматическое размещение деталей на листе с минимальными отходами, схема и таблица кроя.'
+const url = 'https://raskroy.online'
+
+useSeoMeta({
+  title,
+  description,
+  ogTitle: title,
+  ogDescription: description,
+  ogType: 'website',
+  ogUrl: url,
+  ogImage: `${url}/og-image.png`,
+  ogImageWidth: '1200',
+  ogImageHeight: '630',
+  twitterCard: 'summary_large_image',
+  twitterTitle: title,
+  twitterDescription: description,
+  robots: 'index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1',
+  keywords: 'раскрой стекла, раскрой онлайн, калькулятор раскроя, раскрой металла, раскрой фанеры, раскрой ДСП, оптимизация раскроя, нарезка листового материала, раскрой МДФ, программа раскроя',
+})
+
 useHead({
-  title: 'Раскрой стекла',
+  htmlAttrs: { lang: 'ru' },
+  title,
+  link: [
+    { rel: 'canonical', href: url },
+    { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+  ],
   meta: [
-    { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=1' },
+    { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=5' },
     { name: 'theme-color', content: '#2563EB' },
+    { name: 'apple-mobile-web-app-capable', content: 'yes' },
+    { name: 'apple-mobile-web-app-status-bar-style', content: 'default' },
+    { name: 'apple-mobile-web-app-title', content: 'Раскрой онлайн' },
+    { name: 'application-name', content: 'Раскрой онлайн' },
+    { name: 'author', content: 'Раскрой онлайн' },
+    { name: 'geo.region', content: 'RU' },
+    { name: 'geo.placename', content: 'Россия' },
+    { property: 'og:locale', content: 'ru_RU' },
+    { property: 'og:site_name', content: 'Раскрой онлайн' },
+  ],
+  script: [
+    {
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'WebApplication',
+        name: 'Раскрой онлайн',
+        url,
+        description,
+        applicationCategory: 'UtilitiesApplication',
+        operatingSystem: 'Any',
+        browserRequirements: 'Requires JavaScript. Requires HTML5.',
+        inLanguage: 'ru',
+        isAccessibleForFree: true,
+        offers: { '@type': 'Offer', price: '0', priceCurrency: 'RUB' },
+        featureList: [
+          'Алгоритм оптимального размещения MaxRects',
+          'Поддержка поворота деталей',
+          'Учёт пропила',
+          'Ручная корректировка расположения',
+          'Экспорт схемы в SVG',
+          'Таблица кроя с координатами',
+          'Автосохранение',
+        ],
+      }),
+    },
   ],
 })
 </script>
@@ -40,6 +122,7 @@ useHead({
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -47,58 +130,121 @@ body {
   background: #F1F5F9;
   color: #1E293B;
   -webkit-tap-highlight-color: transparent;
-  overscroll-behavior: none;
 }
 
-/* ─── Layout ───────────────────────────────────────────────────── */
-.app {
-  min-height: 100dvh;
-  display: flex;
-  flex-direction: column;
-}
-
+/* ─── Header ────────────────────────────────────────────────────── */
 .header {
   background: #2563EB;
   color: white;
-  padding: 14px 20px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  padding: 0 20px;
   position: sticky;
   top: 0;
   z-index: 100;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+  box-shadow: 0 2px 12px rgba(37, 99, 235, 0.35);
+}
+
+.header-inner {
+  max-width: 1320px;
+  margin: 0 auto;
+  height: 56px;
+  display: flex;
+  align-items: center;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .header-icon {
   width: 26px;
   height: 26px;
   flex-shrink: 0;
+  opacity: 0.95;
 }
 
-.header h1 {
-  font-size: 19px;
+.header-title {
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
-.main {
-  flex: 1;
-  max-width: 640px;
-  width: 100%;
+.header-sub {
+  font-size: 11px;
+  opacity: 0.75;
+  letter-spacing: 0.01em;
+  display: none;
+}
+
+@media (min-width: 600px) {
+  .header-sub { display: block; }
+}
+
+/* ─── Layout ────────────────────────────────────────────────────── */
+.layout {
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 14px 14px 100px;
+  padding: 16px 14px 40px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-/* ─── Card (shared base) ───────────────────────────────────────── */
+/* Mobile: sidebar first (form before viz) */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ─── Desktop two-column ────────────────────────────────────────── */
+@media (min-width: 900px) {
+  .layout {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px 24px 60px;
+  }
+
+  .sidebar {
+    width: 360px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 72px;
+    max-height: calc(100vh - 88px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #CBD5E1 transparent;
+    padding-bottom: 4px;
+  }
+
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+
+  .content {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@media (min-width: 1200px) {
+  .sidebar { width: 400px; }
+}
+
+/* ─── Card (shared base) ─────────────────────────────────────────── */
 .card {
   background: white;
   border-radius: 14px;
   padding: 16px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
 }
 
 .card-title {
@@ -110,7 +256,7 @@ body {
   margin-bottom: 14px;
 }
 
-/* ─── Shared input style ───────────────────────────────────────── */
+/* ─── Input ──────────────────────────────────────────────────────── */
 .input {
   height: 48px;
   border: 1.5px solid #E2E8F0;
@@ -130,11 +276,9 @@ body {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
-.input::placeholder {
-  color: #CBD5E1;
-}
+.input::placeholder { color: #CBD5E1; }
 
-/* ─── Shared button ────────────────────────────────────────────── */
+/* ─── Buttons ────────────────────────────────────────────────────── */
 .btn {
   display: flex;
   align-items: center;
@@ -150,28 +294,13 @@ body {
   -webkit-appearance: none;
 }
 
-.btn:active {
-  transform: scale(0.97);
-  opacity: 0.9;
-}
+.btn:active { transform: scale(0.97); opacity: 0.9; }
 
-.btn-primary {
-  background: #2563EB;
-  color: white;
-  width: 100%;
-}
+.btn-primary { background: #2563EB; color: white; width: 100%; }
+.btn-danger  { background: #FEF2F2; color: #DC2626; }
+.btn-ghost   { background: #F1F5F9; color: #475569; }
 
-.btn-danger {
-  background: #FEF2F2;
-  color: #DC2626;
-}
-
-.btn-ghost {
-  background: #F1F5F9;
-  color: #475569;
-}
-
-/* ─── Error text ───────────────────────────────────────────────── */
+/* ─── Misc ───────────────────────────────────────────────────────── */
 .error-msg {
   margin-top: 8px;
   color: #DC2626;
@@ -179,12 +308,21 @@ body {
   line-height: 1.4;
 }
 
-/* ─── Field label ──────────────────────────────────────────────── */
 .field-label {
   font-size: 13px;
   font-weight: 500;
   color: #64748B;
   margin-bottom: 5px;
   display: block;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────── */
+.site-footer {
+  text-align: center;
+  padding: 20px 16px 40px;
+  font-size: 12px;
+  color: #94A3B8;
+  max-width: 1320px;
+  margin: 0 auto;
 }
 </style>

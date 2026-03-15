@@ -1,7 +1,7 @@
 <template>
   <div class="card" ref="cardRef">
     <p class="card-title">
-      {{ editTarget ? 'Редактировать деталь' : 'Добавить деталь' }}
+      {{ editTarget ? 'Редактировать деталь' : 'Добавить деталь для раскроя' }}
     </p>
 
     <!-- Label -->

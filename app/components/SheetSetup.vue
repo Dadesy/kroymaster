@@ -1,6 +1,6 @@
 <template>
   <div class="card">
-    <p class="card-title">Размер листа (мм)</p>
+    <p class="card-title">Размер исходного листа (мм)</p>
     <div class="row">
       <div class="field">
         <label class="field-label" for="sheet-w">Ширина</label>

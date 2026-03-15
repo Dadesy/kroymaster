@@ -1,6 +1,6 @@
 <template>
   <div class="card">
-    <p class="card-title">Схема раскроя</p>
+    <p class="card-title">Схема раскроя листа</p>
 
     <!-- Controls bar -->
     <div class="controls-bar">
@@ -23,15 +23,12 @@
       <!-- Kerf toggle + stepper -->
       <div class="kerf-group">
         <button
-          class="kerf-toggle"
+          class="icon-btn"
           :class="{ active: kerfEnabled }"
           type="button"
           @click="kerfEnabled = !kerfEnabled"
-          title="Показать отступы (пропил)"
-        >
-          <span class="kerf-icon">✂</span>
-          <span>Пропил</span>
-        </button>
+          title="Пропил (зазор на рез)"
+        >✂ Пропил</button>
         <template v-if="kerfEnabled">
           <button class="stepper-btn" type="button" @click="kerfSize = Math.max(1, kerfSize - 1)">−</button>
           <span class="kerf-val">{{ kerfSize }} мм</span>
@@ -40,10 +37,46 @@
       </div>
     </div>
 
+    <!-- Second row: overlays + export -->
+    <div class="controls-bar" style="margin-top: -2px;">
+      <button
+        class="icon-btn"
+        :class="{ active: showGaps && !isManualMode }"
+        :disabled="isManualMode"
+        type="button"
+        @click="showGaps = !showGaps"
+        title="Показать свободные остатки"
+      >🟩 Остатки</button>
+
+      <button
+        class="icon-btn"
+        :class="{ active: showPositions }"
+        type="button"
+        @click="showPositions = !showPositions"
+        title="Показать координаты X/Y каждой детали"
+      >📍 Позиции</button>
+
+      <button
+        class="icon-btn export-btn"
+        type="button"
+        @click="exportSVG"
+        title="Скачать схему как SVG"
+      >⬇ SVG</button>
+    </div>
+
     <!-- Manual mode hint -->
     <div v-if="isManualMode" class="manual-hint">
       ✋ Ручной режим — перетаскивайте детали
       <span v-if="overlappingInstanceIds.size > 0" class="overlap-warn"> · {{ overlappingInstanceIds.size }} шт. пересекаются!</span>
+    </div>
+
+    <!-- Scraps summary -->
+    <div v-if="showGaps && !isManualMode && freeRects.length > 0" class="gaps-summary">
+      <span class="gaps-label">Свободные остатки (≥50×50 мм):</span>
+      <span v-for="(fr, i) in freeRects.slice(0, 4)" :key="i" class="gap-chip">
+        {{ fr.w }}×{{ fr.h }}
+      </span>
+      <span v-if="freeRects.length > 4" class="gap-more">+{{ freeRects.length - 4 }}</span>
     </div>
 
     <div ref="wrapRef" class="svg-wrap">
@@ -54,7 +87,6 @@
         :width="containerW"
         :height="svgH"
         style="display: block; border-radius: 8px;"
-        :style="{ cursor: dragging ? 'grabbing' : isManualMode ? 'default' : 'default' }"
         xmlns="http://www.w3.org/2000/svg"
         @pointermove.prevent="onPointerMove"
         @pointerup="onPointerUp"
@@ -79,6 +111,35 @@
           </template>
         </g>
 
+        <!-- Free/scrap areas -->
+        <g v-if="showGaps && !isManualMode">
+          <g v-for="(fr, i) in freeRects" :key="`fr-${i}`">
+            <rect
+              :x="fr.x + sw(2)" :y="fr.y + sw(2)"
+              :width="fr.w - sw(4)" :height="fr.h - sw(4)"
+              fill="#10B981" opacity="0.13"
+              stroke="#10B981" :stroke-width="sw(2)"
+              stroke-dasharray="6 4"
+              rx="3"
+              pointer-events="none"
+            />
+            <!-- Dimension label inside scrap if big enough -->
+            <text
+              v-if="fr.w * scale > 60 && fr.h * scale > 26"
+              :x="fr.x + fr.w / 2"
+              :y="fr.y + fr.h / 2"
+              text-anchor="middle"
+              dominant-baseline="middle"
+              fill="#065F46"
+              :font-size="Math.max(sw(18), Math.min(fr.w, fr.h) / 6)"
+              font-weight="600"
+              font-family="-apple-system, sans-serif"
+              opacity="0.8"
+              pointer-events="none"
+            >{{ fr.w }}×{{ fr.h }}</text>
+          </g>
+        </g>
+
         <!-- Placed pieces -->
         <g
           v-for="piece in placedPieces"
@@ -98,6 +159,7 @@
             stroke-dasharray="4 3"
             opacity="0.6"
             rx="2"
+            pointer-events="none"
           />
 
           <!-- Shadow -->
@@ -109,8 +171,9 @@
             :fill="PART_COLORS[piece.colorIndex]"
             opacity="0.15"
             rx="4"
+            pointer-events="none"
           />
-          <!-- Fill -->
+          <!-- Fill (drag target) -->
           <rect
             :x="piece.x + sw(3)"
             :y="piece.y + sw(3)"
@@ -163,6 +226,19 @@
             opacity="0.8"
             pointer-events="none"
           >↻</text>
+
+          <!-- Position label (X, Y from top-left corner) -->
+          <text
+            v-if="showPositions && piece.w * scale > 50"
+            :x="piece.x + sw(6)"
+            :y="piece.y + piece.h - sw(8)"
+            dominant-baseline="auto"
+            fill="white"
+            :font-size="sw(16)"
+            font-family="-apple-system, sans-serif"
+            opacity="0.75"
+            pointer-events="none"
+          >{{ piece.x }},{{ piece.y }}</text>
         </g>
 
         <!-- Dimension labels -->
@@ -211,6 +287,8 @@ const {
   kerfEnabled, kerfSize,
   isManualMode, enterManualMode, exitManualMode, movePiece,
   overlappingInstanceIds,
+  showGaps, showPositions,
+  freeRects,
 } = useGlassStore()
 
 const wrapRef = ref<HTMLElement | null>(null)
@@ -248,11 +326,11 @@ const gridLines = computed(() => {
   return { x: xs, y: ys }
 })
 
-// ── Drag ──────────────────────────────────────────────────────────────────
+// ── Drag ─────────────────────────────────────────────────────────────────────
 interface DragState {
   instanceId: string
   pointerId: number
-  offsetX: number  // SVG units: cursor offset from piece origin
+  offsetX: number
   offsetY: number
 }
 
@@ -274,12 +352,9 @@ function startDrag(e: PointerEvent, instanceId: string) {
   if (!isManualMode.value) return
   const pt = svgPoint(e)
   if (!pt) return
-
   const piece = placedPieces.value.find(p => p.instanceId === instanceId)
   if (!piece) return
-
   ;(e.target as Element).setPointerCapture(e.pointerId)
-
   dragging.value = {
     instanceId,
     pointerId: e.pointerId,
@@ -300,7 +375,22 @@ function onPointerUp(e: PointerEvent) {
   dragging.value = null
 }
 
-// ── ResizeObserver ────────────────────────────────────────────────────────
+// ── Export SVG ────────────────────────────────────────────────────────────────
+function exportSVG() {
+  const svg = svgRef.value
+  if (!svg) return
+  const serializer = new XMLSerializer()
+  const svgStr = serializer.serializeToString(svg)
+  const blob = new Blob([svgStr], { type: 'image/svg+xml' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `raskroj-${sheet.value.width}x${sheet.value.height}.svg`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ── ResizeObserver ────────────────────────────────────────────────────────────
 let ro: ResizeObserver | null = null
 
 function measure() {
@@ -320,9 +410,9 @@ onUnmounted(() => ro?.disconnect())
 .controls-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 /* Mode toggle */
@@ -346,13 +436,45 @@ onUnmounted(() => ro?.disconnect())
   line-height: 1.4;
 }
 
-.mode-btn:first-child {
-  border-right: 1.5px solid #E2E8F0;
+.mode-btn:first-child { border-right: 1.5px solid #E2E8F0; }
+.mode-btn.active { background: #2563EB; color: white; }
+
+/* Icon buttons */
+.icon-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  background: #F8FAFC;
+  color: #64748B;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
 }
 
-.mode-btn.active {
-  background: #2563EB;
-  color: white;
+.icon-btn:disabled { opacity: 0.4; cursor: default; }
+
+.icon-btn.active {
+  background: #F0FDF4;
+  border-color: #10B981;
+  color: #065F46;
+}
+
+.kerf-group .icon-btn.active {
+  background: #FFFBEB;
+  border-color: #F59E0B;
+  color: #B45309;
+}
+
+.export-btn.icon-btn {
+  margin-left: auto;
+  background: #EFF6FF;
+  border-color: #BFDBFE;
+  color: #2563EB;
 }
 
 /* Kerf group */
@@ -362,34 +484,9 @@ onUnmounted(() => ro?.disconnect())
   gap: 6px;
 }
 
-.kerf-toggle {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  border: 1.5px solid #E2E8F0;
-  border-radius: 10px;
-  background: #F8FAFC;
-  color: #64748B;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.kerf-toggle.active {
-  background: #FFFBEB;
-  border-color: #F59E0B;
-  color: #B45309;
-}
-
-.kerf-icon {
-  font-size: 14px;
-}
-
 .stepper-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1.5px solid #E2E8F0;
   border-radius: 8px;
   background: #F8FAFC;
@@ -400,14 +497,11 @@ onUnmounted(() => ro?.disconnect())
   display: flex;
   align-items: center;
   justify-content: center;
-  line-height: 1;
   padding: 0;
   transition: background 0.1s;
 }
 
-.stepper-btn:active {
-  background: #E2E8F0;
-}
+.stepper-btn:active { background: #E2E8F0; }
 
 .kerf-val {
   font-size: 13px;
@@ -417,7 +511,7 @@ onUnmounted(() => ro?.disconnect())
   text-align: center;
 }
 
-/* Manual mode hint */
+/* Hints */
 .manual-hint {
   font-size: 12px;
   color: #475569;
@@ -430,6 +524,35 @@ onUnmounted(() => ro?.disconnect())
 .overlap-warn {
   color: #DC2626;
   font-weight: 700;
+}
+
+/* Gaps summary chips */
+.gaps-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.gaps-label {
+  color: #64748B;
+  font-weight: 500;
+}
+
+.gap-chip {
+  background: #D1FAE5;
+  color: #065F46;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 99px;
+}
+
+.gap-more {
+  color: #94A3B8;
+  font-size: 11px;
 }
 
 /* SVG wrap */

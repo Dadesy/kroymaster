@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 export interface GlassPart {
   id: string
@@ -20,16 +20,16 @@ export interface PlacedPiece {
   rotated: boolean
 }
 
+export interface FreeRect {
+  x: number; y: number; w: number; h: number
+}
+
 export const PART_COLORS = [
   '#3B82F6', '#EF4444', '#10B981', '#F59E0B',
   '#8B5CF6', '#EC4899', '#14B8A6', '#F97316',
 ]
 
 // ── MaxRects 2D Bin Packing ─────────────────────────────────────────────────
-// Strategy: Best Short Side Fit (BSSF) with rotation + kerf support.
-// Each piece occupies (w + kerf) × (h + kerf) in packing space,
-// but is rendered at its original w × h dimensions.
-
 interface Rect { x: number; y: number; w: number; h: number }
 
 function maxRectsPack(
@@ -40,15 +40,15 @@ function maxRectsPack(
     w: number; h: number; colorIndex: number
   }>,
   kerf = 0,
-): PlacedPiece[] {
+): { placed: PlacedPiece[]; free: Rect[] } {
   const placed: PlacedPiece[] = []
   let free: Rect[] = [{ x: 0, y: 0, w: sheetW, h: sheetH }]
 
   for (const piece of pieces) {
     type Candidate = {
       freeIdx: number; x: number; y: number
-      w: number; h: number          // actual render size
-      bw: number; bh: number        // block size incl. kerf
+      w: number; h: number
+      bw: number; bh: number
       rotated: boolean; score: number
     }
     let best: Candidate | null = null
@@ -82,7 +82,6 @@ function maxRectsPack(
       rotated: best.rotated,
     })
 
-    // Use block rect (with kerf) for splitting
     const block: Rect = { x: best.x, y: best.y, w: best.bw, h: best.bh }
 
     const nextFree: Rect[] = []
@@ -100,7 +99,7 @@ function maxRectsPack(
     free = pruneContained(nextFree)
   }
 
-  return placed
+  return { placed, free }
 }
 
 function rectsIntersect(a: Rect, b: Rect): boolean {
@@ -116,21 +115,57 @@ function pruneContained(rects: Rect[]): Rect[] {
   )
 }
 
-// ── Singleton state ─────────────────────────────────────────────────────────
+// ── Persistence ───────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'glass-cutter-v1'
+
+function saveState(data: object) {
+  if (typeof window === 'undefined') return
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch {}
+}
+
+function loadState() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
+// ── Singleton state ───────────────────────────────────────────────────────────
 const sheet = ref({ width: 1000, height: 2000 })
 const parts = ref<GlassPart[]>([])
 const editTarget = ref<GlassPart | null>(null)
 
-// Kerf
 const kerfEnabled = ref(false)
 const kerfSize = ref(2)
 
-// Manual mode
 const isManualMode = ref(false)
 const manualPlacements = ref<PlacedPiece[]>([])
 
+const showGaps = ref(false)
+const showPositions = ref(false)
+
+let _initialized = false
+
 export function useGlassStore() {
-  // ── Area ────────────────────────────────────────────────────────
+  // ── One-time client-side init ────────────────────────────────────
+  if (!_initialized && typeof window !== 'undefined') {
+    _initialized = true
+    const saved = loadState()
+    if (saved) {
+      if (saved.sheet?.width && saved.sheet?.height) sheet.value = saved.sheet
+      if (Array.isArray(saved.parts)) parts.value = saved.parts
+      if (typeof saved.kerfEnabled === 'boolean') kerfEnabled.value = saved.kerfEnabled
+      if (typeof saved.kerfSize === 'number') kerfSize.value = saved.kerfSize
+    }
+    watch(
+      [sheet, parts, kerfEnabled, kerfSize],
+      () => saveState({ sheet: sheet.value, parts: parts.value, kerfEnabled: kerfEnabled.value, kerfSize: kerfSize.value }),
+      { deep: true },
+    )
+  }
+
+  // ── Area ─────────────────────────────────────────────────────────
   const totalArea = computed(() => sheet.value.width * sheet.value.height)
 
   const partsArea = computed(() =>
@@ -145,8 +180,8 @@ export function useGlassStore() {
       : 0,
   )
 
-  // ── Auto packing ────────────────────────────────────────────────
-  const autoPlacements = computed<PlacedPiece[]>(() => {
+  // ── Auto packing ─────────────────────────────────────────────────
+  const autoPackResult = computed(() => {
     const sw = sheet.value.width
     const sh = sheet.value.height
     const kerf = kerfEnabled.value ? kerfSize.value : 0
@@ -182,12 +217,21 @@ export function useGlassStore() {
     return maxRectsPack(sw, sh, expanded, kerf)
   })
 
-  // Exposed placed pieces: manual or auto
+  const autoPlacements = computed(() => autoPackResult.value.placed)
+
+  // Scrap/free rects: usable remainder areas (≥ 50×50 mm), largest first
+  const freeRects = computed((): FreeRect[] => {
+    if (isManualMode.value || !autoPackResult.value.free.length) return []
+    return autoPackResult.value.free
+      .filter(r => r.w >= 50 && r.h >= 50)
+      .sort((a, b) => b.w * b.h - a.w * a.h)
+  })
+
   const placedPieces = computed<PlacedPiece[]>(() =>
     isManualMode.value ? manualPlacements.value : autoPlacements.value,
   )
 
-  // ── Overlap detection (manual mode only) ────────────────────────
+  // ── Overlap detection (manual mode) ──────────────────────────────
   const overlappingInstanceIds = computed((): Set<string> => {
     if (!isManualMode.value) return new Set()
     const pieces = manualPlacements.value
@@ -207,10 +251,11 @@ export function useGlassStore() {
     return result
   })
 
-  // ── Manual mode actions ─────────────────────────────────────────
+  // ── Manual mode ───────────────────────────────────────────────────
   function enterManualMode() {
     manualPlacements.value = autoPlacements.value.map(p => ({ ...p }))
     isManualMode.value = true
+    showGaps.value = false
   }
 
   function exitManualMode() {
@@ -218,7 +263,6 @@ export function useGlassStore() {
     manualPlacements.value = []
   }
 
-  /** Move a piece by instanceId; clamps to sheet bounds. */
   function movePiece(instanceId: string, x: number, y: number) {
     if (!isManualMode.value) return
     const idx = manualPlacements.value.findIndex(p => p.instanceId === instanceId)
@@ -232,7 +276,7 @@ export function useGlassStore() {
     ]
   }
 
-  // ── Placement statistics ─────────────────────────────────────────
+  // ── Placement stats ───────────────────────────────────────────────
   const partPlacedCounts = computed((): Record<string, number> => {
     const counts: Record<string, number> = {}
     for (const p of placedPieces.value)
@@ -265,7 +309,7 @@ export function useGlassStore() {
     ),
   )
 
-  // ── Helpers ─────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────
   function canFitRotated(part: GlassPart): boolean {
     const { width: sw, height: sh } = sheet.value
     const fits = (w: number, h: number) => w <= sw && h <= sh
@@ -289,6 +333,12 @@ export function useGlassStore() {
     if (editTarget.value?.id === id) editTarget.value = null
   }
 
+  function clearAll() {
+    if (isManualMode.value) exitManualMode()
+    parts.value = []
+    editTarget.value = null
+  }
+
   function partColorIndex(id: string): number {
     return parts.value.findIndex(p => p.id === id) % PART_COLORS.length
   }
@@ -300,13 +350,16 @@ export function useGlassStore() {
     // manual mode
     isManualMode, enterManualMode, exitManualMode, movePiece,
     overlappingInstanceIds,
+    // UI toggles
+    showGaps, showPositions,
     // area
     totalArea, partsArea, remainderArea, placedArea, sheetRemainder,
     utilizationPct, placedPct,
     // pieces
     totalRequested, totalPlaced, totalUnplaced,
     placedPieces, partPlacedCounts, oversizedPartIds,
+    freeRects,
     // helpers
-    canFitRotated, addPart, updatePart, deletePart, partColorIndex,
+    canFitRotated, addPart, updatePart, deletePart, clearAll, partColorIndex,
   }
 }
